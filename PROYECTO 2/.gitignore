@@ -1,0 +1,24 @@
+# build de cmake
+build/
+Backend/build/
+
+# discos simulados
+*.mia
+Backend/disks/
+
+
+
+# ejecutables
+*.out
+*.exe
+app
+
+# archivos temporales
+*.log
+*.tmp
+
+# vscode
+.vscode/
+
+# linux
+*.swp
