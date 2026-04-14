@@ -6,8 +6,7 @@
 
 #include "DiskManager.hpp"
 #include "commands/mkfs.hpp"   
-
-
+#include "commands/fdisk.hpp"
 #include "commands/login.hpp"
 #include "commands/cat.hpp"
 #include "commands/mkgrp.hpp"
@@ -15,6 +14,7 @@
 #include "commands/mkusr.hpp"
 #include "commands/rmusr.hpp"
 #include "commands/chgrp.hpp"
+#include "commands/unmount.hpp"
 
 #include "commands/mkfile.hpp"
 #include "commands/mkdir.hpp"
@@ -22,6 +22,7 @@
 #include "commands/exec.hpp"
 
 #include "commands/rep.hpp"
+
 
 static std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -165,25 +166,54 @@ std::string executeLine(const std::string& line) {
         ParsedCommand pc = parseCommand(line, {"-size","-unit","-path","-type","-fit","-name","-delete","-add"});
         if (!pc.unknown.empty()) return "Error: parámetro no reconocido en fdisk.";
 
-        std::string sizeStr = pc.params.count("-size") ? pc.params["-size"] : "";
-        std::string unit    = pc.params.count("-unit") ? pc.params["-unit"] : "";
-        std::string path    = pc.params.count("-path") ? pc.params["-path"] : "";
-        std::string type    = pc.params.count("-type") ? pc.params["-type"] : "";
-        std::string fit     = pc.params.count("-fit")  ? pc.params["-fit"]  : "";
-        std::string name    = pc.params.count("-name") ? pc.params["-name"] : "";
+        std::string sizeStr    = pc.params.count("-size")   ? pc.params["-size"]   : "";
+        std::string unit       = pc.params.count("-unit")   ? pc.params["-unit"]   : "";
+        std::string path       = pc.params.count("-path")   ? pc.params["-path"]   : "";
+        std::string type       = pc.params.count("-type")   ? pc.params["-type"]   : "";
+        std::string fit        = pc.params.count("-fit")    ? pc.params["-fit"]    : "";
+        std::string name       = pc.params.count("-name")   ? pc.params["-name"]   : "";
+        std::string deleteType = pc.params.count("-delete") ? pc.params["-delete"] : "";
+        std::string addStr     = pc.params.count("-add")    ? pc.params["-add"]    : "";
 
-        if (sizeStr.empty() || path.empty() || name.empty()) {
-            return "Error: fdisk requiere -size, -path y -name (para crear).";
+        if (path.empty() || name.empty()) {
+            return "Error: fdisk requiere al menos -path y -name.";
+        }
+
+        // -----------------------------------------------------
+        // DELETE
+        // -----------------------------------------------------
+        if (!deleteType.empty()) {
+            if (!cmd::fdiskDelete(deleteType, path, name, outMsg)) return outMsg;
+            return outMsg;
+        }
+
+        // -----------------------------------------------------
+        // ADD
+        // -----------------------------------------------------
+        if (!addStr.empty()) {
+            int32_t addValue = 0;
+            try { addValue = (int32_t)std::stoi(addStr); }
+            catch (...) { return "Error: -add debe ser entero."; }
+
+            if (!cmd::fdiskAdd(addValue, unit, path, name, outMsg)) return outMsg;
+            return outMsg;
+        }
+
+        // -----------------------------------------------------
+        // CREACIÓN NORMAL
+        // -----------------------------------------------------
+        if (sizeStr.empty()) {
+            return "Error: fdisk requiere -size para crear una partición.";
         }
 
         int32_t size = 0;
         try { size = (int32_t)std::stoi(sizeStr); }
         catch (...) { return "Error: -size debe ser entero positivo."; }
 
-        if (!DiskManager::fdiskCreate(size, unit, path, type, fit, name, outMsg)) return outMsg;
+        if (!cmd::fdiskCreate(size, unit, path, type, fit, name, outMsg)) return outMsg;
         return outMsg;
     }
-
+    
     // =========================================================
     // MOUNT
     // =========================================================
@@ -223,22 +253,44 @@ std::string executeLine(const std::string& line) {
     }
 
     // =========================================================
+    // UNMOUNT
+    // =========================================================
+    if (cmdName == "unmount") {
+        ParsedCommand pc = parseCommand(line, {"-id"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en unmount.";
+
+        std::string id = pc.params.count("-id") ? pc.params["-id"] : "";
+
+        if (id.empty()) return "Error: unmount requiere -id.";
+
+        if (!cmd::unmount(id, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
     // MKFS
     // =========================================================
     if (cmdName == "mkfs") {
-        ParsedCommand pc = parseCommand(line, {"-id", "-type"});
+        ParsedCommand pc = parseCommand(line, {"-id", "-type", "-fs"});
         if (!pc.unknown.empty()) return "Error: parámetro no reconocido en mkfs.";
 
         std::string id   = pc.params.count("-id")   ? pc.params["-id"]   : "";
         std::string type = pc.params.count("-type") ? pc.params["-type"] : "full";
+        std::string fs   = pc.params.count("-fs")   ? pc.params["-fs"]   : "2fs";
 
         if (id.empty()) return "Error: mkfs requiere -id.";
 
         type = toLower(type);
+        fs   = toLower(fs);
+
         if (type.empty()) type = "full";
         if (type != "full") return "Error: mkfs -type solo admite 'full'.";
 
-        if (!cmd::mkfs(id, type, outMsg)) return outMsg;
+        if (fs != "2fs" && fs != "3fs") {
+            return "Error: mkfs -fs solo admite '2fs' o '3fs'.";
+        }
+
+        if (!cmd::mkfs(id, type, fs, outMsg)) return outMsg;
         return outMsg;
     }
 
@@ -349,8 +401,7 @@ std::string executeLine(const std::string& line) {
 
     
     // =========================================================
-    // LOGIN  (NO requiere sesión previa)
-    // login -usr= -pwd= -id=
+    // LOGIN  
     // =========================================================
     if (cmdName == "login") {
         ParsedCommand pc = parseCommand(line, {"-user","-pass","-id"});

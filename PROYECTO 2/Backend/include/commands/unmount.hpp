@@ -2,10 +2,8 @@
 #include <string>
 
 namespace cmd {
-    bool mkfs(
+    bool unmount(
         const std::string& id,
-        const std::string& type,
-        const std::string& fs,
         std::string& outMsg
     );
 }

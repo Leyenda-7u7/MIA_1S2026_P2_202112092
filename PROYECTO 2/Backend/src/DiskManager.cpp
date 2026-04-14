@@ -22,11 +22,9 @@ bool DiskManager::rmdisk(const std::string& path,
     return cmd::rmdisk(path, outMsg);
 }
 
-// Wrapper que tu CommandParser busca: fdisk(params, outMsg)
 bool DiskManager::fdisk(const std::unordered_map<std::string, std::string>& params,
                         std::string& outMsg) {
 
-    // Lee params típicos (en tu CommandParser tú los guardas con key "-size", etc.)
     auto get = [&](const std::string& k) -> std::string {
         auto it = params.find(k);
         return (it == params.end()) ? "" : it->second;
@@ -79,11 +77,13 @@ bool DiskManager::mounted(std::string& outMsg) {
     return cmd::mounted(outMsg);
 }
 
-bool DiskManager::mkfs(const std::string& id,
-                       const std::string& typeStr,
-                       std::string& outMsg) {
-    return cmd::mkfs(id, typeStr, outMsg);
+bool DiskManager::mkfs(const std::string& id, 
+                        const std::string& typeStr, 
+                        const std::string& fsStr, 
+                        std::string& outMsg) {
+    return cmd::mkfs(id, typeStr, fsStr, outMsg);
 }
+
 
 
 

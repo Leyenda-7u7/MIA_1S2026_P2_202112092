@@ -20,4 +20,6 @@ namespace cmd {
         int32_t& size, 
         std::string& outMsg
     );
+
+     void removeMountedById(const std::string& id);
 }

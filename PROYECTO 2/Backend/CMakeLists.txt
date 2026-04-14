@@ -29,8 +29,11 @@ add_library(core
     src/commands/mkfile.cpp
     src/commands/mkdir.cpp
     src/commands/exec.cpp
-
+    src/commands/unmount.cpp
     src/commands/rep.cpp
+    
+    src/ext3/journal.cpp
+    
 
     src/reports/mbr_report.cpp
     src/reports/disk_report.cpp
@@ -47,7 +50,7 @@ add_library(core
 target_include_directories(core PUBLIC include src)
 
 # ===============================
-# Ejecutable CLI (tu consola actual)
+# Ejecutable CLI 
 # ===============================
 
 add_executable(app

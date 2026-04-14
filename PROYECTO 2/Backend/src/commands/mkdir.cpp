@@ -3,6 +3,7 @@
 #include "commands/login.hpp"
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <cstring>
@@ -359,8 +360,29 @@ bool mkdir(const std::string& path, bool parents, std::string& outMsg) {
         return false;
     }
 
+    // =====================
+    // JOURNAL (EXT3)
+    // =====================
+    if (sb.s_filesystem_type == 3) {
+
+        int32_t journalingStart = partStart + sizeof(Superblock);
+
+        ext3::writeJournal(
+            disk,
+            journalingStart,
+            0,              
+            "mkdir",
+            path,
+            "-"
+        );
+    }
+
+    // =====================
+
     outMsg = "Carpeta creada correctamente: " + path;
     return true;
-}
+    }
+
+
 
 } // namespace cmd

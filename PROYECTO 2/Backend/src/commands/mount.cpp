@@ -8,10 +8,8 @@
 #include <vector>
 #include <algorithm>
 
-// ====== CONFIG ======
 static const std::string CARNET_SUFFIX = "92"; // 202112092 -> "92"
 
-// ====== RAM TABLE ======
 struct MountedEntry {
     std::string diskPath;
     std::string partName;
@@ -26,10 +24,10 @@ struct MountedEntry {
 // Lista global en RAM
 static std::vector<MountedEntry> g_mounts;
 
-// Mapa disco->letra asignada
+// Mapa disco => letra asignada
 static std::unordered_map<std::string, char> g_diskLetter;
 
-// Contador por disco (para número correlativo)
+// Contador por disco (para numero correlativo)
 static std::unordered_map<std::string, int> g_diskCounter;
 
 // ====== helpers ======
@@ -230,6 +228,22 @@ bool getMountedById(const std::string& id, std::string& diskPath, int32_t& start
     }
     outMsg = "Error: no existe una partición montada con id=" + id;
     return false;
+}
+
+// -------------------------------------------------
+// UNMOUNT helper: eliminar de RAM por ID
+// -------------------------------------------------
+void removeMountedById(const std::string& id) {
+    g_mounts.erase(
+        std::remove_if(
+            g_mounts.begin(),
+            g_mounts.end(),
+            [&](const MountedEntry& m) {
+                return m.id == id;
+            }
+        ),
+        g_mounts.end()
+    );
 }
 
 } // namespace cmd

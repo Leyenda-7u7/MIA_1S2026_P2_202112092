@@ -87,6 +87,58 @@ static bool ebrPosInRange(int32_t pos, int32_t extStart, int32_t extSize) {
     return (pos >= extStart) && (pos + (int32_t)sizeof(EBR) <= extEnd);
 }
 
+static bool zeroFill(const std::string& path, int32_t start, int32_t size, std::string& err) {
+    if (size <= 0) return true;
+
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!file.is_open()) {
+        err = "Error: no se pudo abrir el disco para limpieza.";
+        return false;
+    }
+
+    file.seekp(start, std::ios::beg);
+
+    char buffer[1024];
+    std::memset(buffer, 0, sizeof(buffer));
+
+    int32_t remaining = size;
+    while (remaining > 0) {
+        int32_t chunk = remaining > (int32_t)sizeof(buffer) ? (int32_t)sizeof(buffer) : remaining;
+        file.write(buffer, chunk);
+        if (!file) {
+            err = "Error: no se pudo limpiar el espacio de la partición.";
+            return false;
+        }
+        remaining -= chunk;
+    }
+
+    file.flush();
+    return true;
+}
+
+static bool findPrimaryOrExtendedByName(MBR& mbr, const std::string& name, int& outIndex) {
+    outIndex = -1;
+    for (int i = 0; i < 4; i++) {
+        const Partition& p = mbr.mbr_partitions[i];
+        if (p.part_s > 0 && cleanName16(p.part_name) == name) {
+            outIndex = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool findExtended(MBR& mbr, int& extIdx) {
+    extIdx = -1;
+    for (int i = 0; i < 4; i++) {
+        if (mbr.mbr_partitions[i].part_s > 0 && mbr.mbr_partitions[i].part_type == 'E') {
+            extIdx = i;
+            return true;
+        }
+    }
+    return false;
+}
+
 namespace cmd {
 
 static bool createPrimaryOrExtended(int32_t bytes,
@@ -131,7 +183,7 @@ static bool createPrimaryOrExtended(int32_t bytes,
         return false;
     }
 
-    // Calcular inicio por huecos (best-fit simple por orden)
+    // Calcular inicio por huecos 
     int32_t start = (int32_t)sizeof(MBR);
     std::vector<std::pair<int32_t,int32_t>> used;
     for (int i = 0; i < 4; i++) {
@@ -152,7 +204,7 @@ static bool createPrimaryOrExtended(int32_t bytes,
     // Crear partición en MBR
     auto& part = mbr.mbr_partitions[freeIndex];
     part.part_status = '0';
-    part.part_type = type;     // P o E
+    part.part_type = type;     
     part.part_fit = fit;
     part.part_start = start;
     part.part_s = bytes;
@@ -169,8 +221,8 @@ static bool createPrimaryOrExtended(int32_t bytes,
         EBR e{};
         e.part_mount = '0';
         e.part_fit   = fit;
-        e.part_start = start;      // en este diseño: el start del EBR = donde está el EBR
-        e.part_s     = 0;          // vacío (sin lógica aún)
+        e.part_start = start;      
+        e.part_s     = 0;          
         e.part_next  = -1;
         std::memset(e.part_name, 0, sizeof(e.part_name));
 
@@ -222,7 +274,7 @@ static bool createLogical(int32_t bytes,
     EBR cur{};
     if (!readEBRAt(path, ebrPos, cur, err)) { outMsg = err; return false; }
 
-    // Validar duplicado en lógicas (y también permitir si aún está vacío)
+    // Validar duplicado en lógicas 
     {
         int32_t scanPos = extStart;
         int scanSafe = 0;
@@ -348,13 +400,336 @@ bool fdiskCreate(int32_t size,
 
     int32_t bytes = (int32_t)bytesLL;
 
-    // ✅ LÓGICA: va a EBR, NO al MBR
+    // LÓGICA
     if (type == 'L') {
         return createLogical(bytes, path, fit, name, outMsg);
     }
 
-    // ✅ PRIMARIA / EXTENDIDA: van al MBR
+    // PRIMARIA / EXTENDIDA
     return createPrimaryOrExtended(bytes, path, type, fit, name, outMsg);
+}
+
+bool fdiskDelete(const std::string& deleteType,
+                 const std::string& path,
+                 const std::string& name,
+                 std::string& outMsg) {
+
+    if (deleteType.empty() || path.empty() || name.empty()) {
+        outMsg = "Error: fdisk delete requiere -delete, -path y -name.";
+        return false;
+    }
+
+    if (!std::filesystem::exists(path)) {
+        outMsg = "Error: el disco no existe.";
+        return false;
+    }
+
+    std::string del = deleteType;
+    std::transform(del.begin(), del.end(), del.begin(), ::tolower);
+
+    if (del != "fast" && del != "full") {
+        outMsg = "Error: -delete solo admite 'fast' o 'full'.";
+        return false;
+    }
+
+    MBR mbr{};
+    std::string err;
+    if (!readMBR(path, mbr, err)) {
+        outMsg = err;
+        return false;
+    }
+
+    // 1) Buscar primero en primarias / extendidas
+    int idx = -1;
+    if (findPrimaryOrExtendedByName(mbr, name, idx)) {
+        Partition old = mbr.mbr_partitions[idx];
+
+        // Si es full, limpiar bytes
+        if (del == "full") {
+            if (!zeroFill(path, old.part_start, old.part_s, err)) {
+                outMsg = err;
+                return false;
+            }
+        }
+
+        // Si es extendida, solo al limpiar su espacio ya también “borra” lógicas internamente
+        Partition empty{};
+        mbr.mbr_partitions[idx] = empty;
+
+        if (!writeMBR(path, mbr, err)) {
+            outMsg = err;
+            return false;
+        }
+
+        outMsg = "Partición eliminada correctamente: " + name;
+        return true;
+    }
+
+    // 2) Buscar en lógicas
+    int extIdx = -1;
+    if (!findExtended(mbr, extIdx)) {
+        outMsg = "Error: no existe una partición con nombre '" + name + "'.";
+        return false;
+    }
+
+    Partition& ext = mbr.mbr_partitions[extIdx];
+    int32_t extStart = ext.part_start;
+    int32_t extSize = ext.part_s;
+
+    int32_t pos = extStart;
+    int32_t prevPos = -1;
+    EBR cur{};
+    int safeguard = 0;
+
+    while (pos != -1) {
+        if (!ebrPosInRange(pos, extStart, extSize)) {
+            outMsg = "Error: cadena EBR corrupta.";
+            return false;
+        }
+
+        if (!readEBRAt(path, pos, cur, err)) {
+            outMsg = err;
+            return false;
+        }
+
+        std::string curName = cleanName16(cur.part_name);
+
+        if (cur.part_s > 0 && curName == name) {
+            // full: limpiar el espacio ocupado por la lógica
+            if (del == "full") {
+                int32_t logicDataStart = cur.part_start + (int32_t)sizeof(EBR);
+                if (!zeroFill(path, logicDataStart, cur.part_s, err)) {
+                    outMsg = err;
+                    return false;
+                }
+            }
+
+            // Si es el primer EBR de la extendida
+            if (prevPos == -1) {
+                // Si no hay siguiente, lo dejamos vacío
+                if (cur.part_next == -1) {
+                    EBR empty{};
+                    empty.part_mount = '0';
+                    empty.part_fit = ext.part_fit;
+                    empty.part_start = extStart;
+                    empty.part_s = 0;
+                    empty.part_next = -1;
+                    std::memset(empty.part_name, 0, sizeof(empty.part_name));
+
+                    if (!writeEBRAt(path, extStart, empty, err)) {
+                        outMsg = err;
+                        return false;
+                    }
+                } else {
+                    // Si hay siguiente, copiamos el siguiente EBR sobre el actual
+                    EBR next{};
+                    if (!readEBRAt(path, cur.part_next, next, err)) {
+                        outMsg = err;
+                        return false;
+                    }
+
+                    if (!writeEBRAt(path, pos, next, err)) {
+                        outMsg = err;
+                        return false;
+                    }
+                }
+            } else {
+                // Reconectar previo con el siguiente
+                EBR prev{};
+                if (!readEBRAt(path, prevPos, prev, err)) {
+                    outMsg = err;
+                    return false;
+                }
+
+                prev.part_next = cur.part_next;
+
+                if (!writeEBRAt(path, prevPos, prev, err)) {
+                    outMsg = err;
+                    return false;
+                }
+            }
+
+            outMsg = "Partición eliminada correctamente: " + name;
+            return true;
+        }
+
+        prevPos = pos;
+        pos = cur.part_next;
+
+        if (++safeguard > 1000) {
+            outMsg = "Error: demasiados EBRs (posible loop).";
+            return false;
+        }
+    }
+
+    outMsg = "Error: no existe una partición con nombre '" + name + "'.";
+    return false;
+}
+
+bool fdiskAdd(int32_t addValue,
+              const std::string& unitStr,
+              const std::string& path,
+              const std::string& name,
+              std::string& outMsg) {
+
+    if (path.empty() || name.empty()) {
+        outMsg = "Error: fdisk add requiere -path y -name.";
+        return false;
+    }
+
+    if (addValue == 0) {
+        outMsg = "Error: el valor de -add no puede ser 0.";
+        return false;
+    }
+
+    if (!std::filesystem::exists(path)) {
+        outMsg = "Error: el disco no existe.";
+        return false;
+    }
+
+    long long deltaLL = toBytes(std::abs(addValue), unitStr);
+    if (deltaLL <= 0) {
+        outMsg = "Error: unidad inválida para -add.";
+        return false;
+    }
+
+    int32_t delta = (int32_t)deltaLL;
+    if (addValue < 0) delta = -delta;
+
+    MBR mbr{};
+    std::string err;
+    if (!readMBR(path, mbr, err)) {
+        outMsg = err;
+        return false;
+    }
+
+    // ===== 1) Primaria o extendida =====
+    int idx = -1;
+    if (findPrimaryOrExtendedByName(mbr, name, idx)) {
+        Partition& part = mbr.mbr_partitions[idx];
+
+        if (delta < 0) {
+            if (part.part_s + delta <= 0) {
+                outMsg = "Error: no se puede reducir la partición a tamaño cero o negativo.";
+                return false;
+            }
+
+            part.part_s += delta;
+
+            if (!writeMBR(path, mbr, err)) {
+                outMsg = err;
+                return false;
+            }
+
+            outMsg = "Espacio modificado correctamente en la partición: " + name;
+            return true;
+        }
+
+        // delta > 0: validar espacio libre después
+        int32_t currentEnd = part.part_start + part.part_s;
+        int32_t nextStart = mbr.mbr_tamano;
+
+        for (int i = 0; i < 4; i++) {
+            if (i == idx) continue;
+            const Partition& other = mbr.mbr_partitions[i];
+            if (other.part_s > 0 && other.part_start > part.part_start) {
+                nextStart = std::min(nextStart, other.part_start);
+            }
+        }
+
+        int32_t freeAfter = nextStart - currentEnd;
+        if (freeAfter < delta) {
+            outMsg = "Error: no hay espacio libre suficiente después de la partición.";
+            return false;
+        }
+
+        part.part_s += delta;
+
+        if (!writeMBR(path, mbr, err)) {
+            outMsg = err;
+            return false;
+        }
+
+        outMsg = "Espacio modificado correctamente en la partición: " + name;
+        return true;
+    }
+
+    // ===== 2) Lógica =====
+    int extIdx = -1;
+    if (!findExtended(mbr, extIdx)) {
+        outMsg = "Error: no existe una partición con nombre '" + name + "'.";
+        return false;
+    }
+
+    Partition& ext = mbr.mbr_partitions[extIdx];
+    int32_t extStart = ext.part_start;
+    int32_t extSize = ext.part_s;
+    int32_t extEnd = extStart + extSize;
+
+    int32_t pos = extStart;
+    EBR cur{};
+    int safeguard = 0;
+
+    while (pos != -1) {
+        if (!ebrPosInRange(pos, extStart, extSize)) {
+            outMsg = "Error: cadena EBR corrupta.";
+            return false;
+        }
+
+        if (!readEBRAt(path, pos, cur, err)) {
+            outMsg = err;
+            return false;
+        }
+
+        if (cur.part_s > 0 && cleanName16(cur.part_name) == name) {
+            if (delta < 0) {
+                if (cur.part_s + delta <= 0) {
+                    outMsg = "Error: no se puede reducir la partición lógica a tamaño cero o negativo.";
+                    return false;
+                }
+
+                cur.part_s += delta;
+
+                if (!writeEBRAt(path, pos, cur, err)) {
+                    outMsg = err;
+                    return false;
+                }
+
+                outMsg = "Espacio modificado correctamente en la partición: " + name;
+                return true;
+            }
+
+            // delta > 0
+            int32_t currentEnd = cur.part_start + (int32_t)sizeof(EBR) + cur.part_s;
+            int32_t nextStart = (cur.part_next == -1) ? extEnd : cur.part_next;
+
+            int32_t freeAfter = nextStart - currentEnd;
+            if (freeAfter < delta) {
+                outMsg = "Error: no hay espacio libre suficiente después de la partición lógica.";
+                return false;
+            }
+
+            cur.part_s += delta;
+
+            if (!writeEBRAt(path, pos, cur, err)) {
+                outMsg = err;
+                return false;
+            }
+
+            outMsg = "Espacio modificado correctamente en la partición: " + name;
+            return true;
+        }
+
+        pos = cur.part_next;
+
+        if (++safeguard > 1000) {
+            outMsg = "Error: demasiados EBRs (posible loop).";
+            return false;
+        }
+    }
+
+    outMsg = "Error: no existe una partición con nombre '" + name + "'.";
+    return false;
 }
 
 } // namespace cmd
