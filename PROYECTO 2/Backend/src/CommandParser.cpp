@@ -15,6 +15,8 @@
 #include "commands/rmusr.hpp"
 #include "commands/chgrp.hpp"
 #include "commands/unmount.hpp"
+#include "commands/remove.hpp"
+#include "commands/rename.hpp"
 
 #include "commands/mkfile.hpp"
 #include "commands/mkdir.hpp"
@@ -468,6 +470,38 @@ std::string executeLine(const std::string& line) {
 
     if (requiresSession(cmdName) && !cmd::hasActiveSession()) {
         return "Error: no existe una sesión activa. Use login.";
+    }
+
+    // =========================================================
+    // REMOVE
+    // =========================================================
+    if (cmdName == "remove") {
+        ParsedCommand pc = parseCommand(line, {"-path"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en remove.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+
+        if (path.empty()) return "Error: remove requiere -path.";
+
+        if (!cmd::remove(path, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // RENAME
+    // =========================================================
+    if (cmdName == "rename") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-name"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en rename.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string name = pc.params.count("-name") ? pc.params["-name"] : "";
+
+        if (path.empty() || name.empty())
+            return "Error: rename requiere -path y -name.";
+
+        if (!cmd::rename(path, name, outMsg)) return outMsg;
+        return outMsg;
     }
 
     // =========================================================

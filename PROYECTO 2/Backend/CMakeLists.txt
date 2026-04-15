@@ -31,7 +31,11 @@ add_library(core
     src/commands/exec.cpp
     src/commands/unmount.cpp
     src/commands/rep.cpp
-    
+    src/commands/remove.cpp
+    src/commands/rename.cpp
+
+
+
     src/ext3/journal.cpp
     
 
