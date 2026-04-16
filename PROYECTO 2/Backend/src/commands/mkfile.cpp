@@ -1,8 +1,8 @@
 #include "commands/mkfile.hpp"
-
-#include "commands/login.hpp"   // hasActiveSession(), getSessionPartition(), sessionUid(), sessionGid()
-#include "Structures.hpp"       // Superblock, Inode, FolderBlock, Block64
+#include "commands/login.hpp"   
+#include "Structures.hpp"       
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <cstring>
@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <filesystem>
 
-// ----------------- IO helpers -----------------
+
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -31,24 +31,21 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// ----------------- Permisos UGO -----------------
 static int digitToInt(char c) { return (c >= '0' && c <= '7') ? (c - '0') : 0; }
 
 static bool canWriteDir(const Inode& ino, int32_t uid, int32_t gid) {
-    // root TODO
+
     if (uid == 1) return true;
 
     int u = digitToInt(ino.i_perm[0]);
     int g = digitToInt(ino.i_perm[1]);
     int o = digitToInt(ino.i_perm[2]);
 
-    // bit escritura = 2
     if (uid == ino.i_uid) return (u & 2) != 0;
     if (gid == ino.i_gid) return (g & 2) != 0;
     return (o & 2) != 0;
 }
 
-// ----------------- EXT2 helpers -----------------
 static bool readSuperblock(const std::string& disk, int32_t partStart, Superblock& sb, std::string& err) {
     if (!readAt(disk, partStart, &sb, sizeof(Superblock), err)) return false;
     if (sb.s_magic != 0xEF53) { err = "Error: la partición no parece EXT2 (magic inválido)."; return false; }
@@ -112,7 +109,6 @@ static bool splitAbsPath(const std::string& path, std::vector<std::string>& part
     return true;
 }
 
-// Buscar entrada por nombre dentro de carpeta inode (solo directos)
 static bool findEntryInDir(const std::string& disk, const Superblock& sb, int32_t dirIno,
                            const std::string& name, int32_t& outInode, std::string& err) {
     Inode dino{};
@@ -139,7 +135,6 @@ static bool findEntryInDir(const std::string& disk, const Superblock& sb, int32_
     return true; // no encontrado
 }
 
-// Encontrar primer '0' en bitmap (simple)
 static bool findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t count, int32_t& outIndex, std::string& err) {
     std::ifstream file(disk, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir disco para leer bitmap."; return false; }
@@ -155,14 +150,12 @@ static bool findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t c
     return true;
 }
 
-// Agregar entry name->inode dentro de un directorio (crea nuevo folder block si no hay espacio)
 static bool addEntryToDir(const std::string& disk, Superblock& sb, int32_t partStart,
                           int32_t dirInoIdx, const std::string& name, int32_t childInoIdx,
                           std::string& err) {
     Inode dir{};
     if (!readInode(disk, sb, dirInoIdx, dir, err)) return false;
 
-    // 1) buscar slot libre en bloques existentes
     for (int i = 0; i < 12; i++) {
         int32_t b = dir.i_block[i];
         if (b < 0) continue;
@@ -245,7 +238,6 @@ static Inode makeFileInode(int32_t uid, int32_t gid, int32_t size, const char pe
     return ino;
 }
 
-// Crear carpeta (inode + 1 folderblock con . y ..) y enlazarla al padre
 static bool createDirUnder(const std::string& disk, Superblock& sb, int32_t partStart,
                            int32_t parentIdx, const std::string& name,
                            int32_t uid, int32_t gid,
@@ -295,20 +287,18 @@ static bool createDirUnder(const std::string& disk, Superblock& sb, int32_t part
     return true;
 }
 
-// Asegura carpetas padres (mkdir -p) si recursive=true
 static bool ensureParentDirs(const std::string& disk, Superblock& sb, int32_t partStart,
                             const std::vector<std::string>& dirParts,
                             bool recursive,
                             int32_t uid, int32_t gid,
                             int32_t& outParentInode,
                             std::string& err) {
-    int32_t current = 0; // root inode
+    int32_t current = 0; 
     for (const auto& part : dirParts) {
         int32_t next = -1;
         if (!findEntryInDir(disk, sb, current, part, next, err)) return false;
 
         if (next >= 0) {
-            // existe: debe ser carpeta
             Inode ino{};
             if (!readInode(disk, sb, next, ino, err)) return false;
             if (ino.i_type != '0') { err = "Error: '" + part + "' no es carpeta."; return false; }
@@ -316,7 +306,6 @@ static bool ensureParentDirs(const std::string& disk, Superblock& sb, int32_t pa
             continue;
         }
 
-        // no existe
         if (!recursive) {
             err = "Error: no existen carpetas padres. Use -r para crearlas.";
             return false;
@@ -330,9 +319,8 @@ static bool ensureParentDirs(const std::string& disk, Superblock& sb, int32_t pa
     return true;
 }
 
-// Construir contenido
+
 static bool buildContent(const std::string& contHostPath, int32_t size, std::string& out, std::string& err) {
-    // prioridad cont
     if (!contHostPath.empty()) {
         if (!std::filesystem::exists(contHostPath)) {
             err = "Error: -cont no existe en el host: " + contHostPath;
@@ -351,6 +339,25 @@ static bool buildContent(const std::string& contHostPath, int32_t size, std::str
     out.reserve((size_t)size);
     for (int32_t i = 0; i < size; i++) out.push_back(char('0' + (i % 10)));
     return true;
+}
+
+static void tryWriteMkfileJournal(const std::string& disk,
+                                  int32_t partStart,
+                                  const Superblock& sb,
+                                  const std::string& path,
+                                  const std::string& content) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "mkfile",
+        path,
+        content
+    );
 }
 
 namespace cmd {
@@ -372,7 +379,7 @@ bool mkfile(const std::string& path,
         return false;
     }
 
-    // 2) partición de sesión
+    // 2) partición de sesion
     std::string disk;
     int32_t partStart = 0, partSize = 0;
     std::string err;
@@ -394,7 +401,7 @@ bool mkfile(const std::string& path,
     if (parts.empty()) { outMsg = "Error: path inválido."; return false; }
 
     std::string filename = parts.back();
-    parts.pop_back(); // dir parts
+    parts.pop_back(); 
 
     int32_t uid = cmd::sessionUid();
     int32_t gid = cmd::sessionGid();
@@ -456,7 +463,6 @@ bool mkfile(const std::string& path,
         blocks.push_back(freeBlk);
     }
 
-    // guardar SB actualizado
     if (!writeSuperblock(disk, partStart, sb, err)) { outMsg = err; return false; }
 
     // 11) escribir bloques de contenido
@@ -483,8 +489,13 @@ bool mkfile(const std::string& path,
         return false;
     }
 
+    // =====================
+    // JOURNAL (EXT3)
+    // =====================
+    tryWriteMkfileJournal(disk, partStart, sb, path, content);
+
     outMsg = "Archivo creado correctamente: " + path;
     return true;
 }
 
-} // namespace cmd
+} 

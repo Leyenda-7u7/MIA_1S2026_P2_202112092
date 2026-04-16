@@ -33,7 +33,13 @@ add_library(core
     src/commands/rep.cpp
     src/commands/remove.cpp
     src/commands/rename.cpp
-
+    src/commands/copy.cpp
+    src/commands/move.cpp
+    src/commands/find.cpp
+    src/commands/chown.cpp
+    src/commands/chmod.cpp
+    src/commands/loss.cpp
+    src/commands/journaling.cpp
 
 
     src/ext3/journal.cpp

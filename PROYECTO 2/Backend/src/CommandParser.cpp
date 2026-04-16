@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "DiskManager.hpp"
+
 #include "commands/mkfs.hpp"   
 #include "commands/fdisk.hpp"
 #include "commands/login.hpp"
@@ -17,14 +18,17 @@
 #include "commands/unmount.hpp"
 #include "commands/remove.hpp"
 #include "commands/rename.hpp"
-
+#include "commands/copy.hpp"
+#include "commands/move.hpp"
 #include "commands/mkfile.hpp"
 #include "commands/mkdir.hpp"
-
+#include "commands/find.hpp"
 #include "commands/exec.hpp"
-
+#include "commands/chown.hpp"
 #include "commands/rep.hpp"
-
+#include "commands/chmod.hpp"
+#include "commands/loss.hpp"
+#include "commands/journaling.hpp"
 
 static std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -505,6 +509,109 @@ std::string executeLine(const std::string& line) {
     }
 
     // =========================================================
+    // COPY
+    // =========================================================
+    if (cmdName == "copy") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-destino"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en copy.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string destino = pc.params.count("-destino") ? pc.params["-destino"] : "";
+
+        if (path.empty() || destino.empty())
+            return "Error: copy requiere -path y -destino.";
+
+        if (!cmd::copy(path, destino, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // MOVE
+    // =========================================================
+    if (cmdName == "move") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-destino"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en move.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string destino = pc.params.count("-destino") ? pc.params["-destino"] : "";
+
+        if (path.empty() || destino.empty())
+            return "Error: move requiere -path y -destino.";
+
+        if (!cmd::move(path, destino, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // FIND
+    // =========================================================
+    if (cmdName == "find") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-name"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en find.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string name = pc.params.count("-name") ? pc.params["-name"] : "";
+
+        if (path.empty() || name.empty())
+            return "Error: find requiere -path y -name.";
+
+        if (!cmd::find(path, name, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // CHOWN
+    // =========================================================
+    if (cmdName == "chown") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-r", "-usuario"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en chown.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string usuario = pc.params.count("-usuario") ? pc.params["-usuario"] : "";
+        bool recursive = pc.params.count("-r") > 0;
+
+        if (path.empty() || usuario.empty())
+            return "Error: chown requiere -path y -usuario.";
+
+        if (!cmd::chown(path, recursive, usuario, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // CHMOD
+    // =========================================================
+    if (cmdName == "chmod") {
+        ParsedCommand pc = parseCommand(line, {"-path", "-ugo", "-r"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en chmod.";
+
+        std::string path = pc.params.count("-path") ? pc.params["-path"] : "";
+        std::string ugo  = pc.params.count("-ugo")  ? pc.params["-ugo"]  : "";
+        bool recursive = pc.params.count("-r") > 0;
+
+        if (path.empty() || ugo.empty())
+            return "Error: chmod requiere -path y -ugo.";
+
+        if (!cmd::chmod(path, recursive, ugo, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // LOSS
+    // =========================================================
+    if (cmdName == "loss") {
+        ParsedCommand pc = parseCommand(line, {"-id"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en loss.";
+
+        std::string id = pc.params.count("-id") ? pc.params["-id"] : "";
+
+        if (id.empty())
+            return "Error: loss requiere -id.";
+
+        if (!cmd::loss(id, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
     // CAT
     // =========================================================
     if (cmdName == "cat") {
@@ -543,6 +650,22 @@ std::string executeLine(const std::string& line) {
         if (path.empty()) return "Error: exec requiere -path.";
 
         if (!cmd::execScript(path, outMsg)) return outMsg;
+        return outMsg;
+    }
+
+    // =========================================================
+    // JOURNALING
+    // =========================================================
+    if (cmdName == "journaling") {
+        ParsedCommand pc = parseCommand(line, {"-id"});
+        if (!pc.unknown.empty()) return "Error: parámetro no reconocido en journaling.";
+
+        std::string id = pc.params.count("-id") ? pc.params["-id"] : "";
+
+        if (id.empty())
+            return "Error: journaling requiere -id.";
+
+        if (!cmd::journaling(id, outMsg)) return outMsg;
         return outMsg;
     }
 

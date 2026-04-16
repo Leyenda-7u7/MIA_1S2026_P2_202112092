@@ -11,7 +11,6 @@
 #include <vector>
 #include <algorithm>
 
-// ----------------- IO helpers -----------------
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -31,7 +30,6 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// ----------------- Permisos UGO -----------------
 static int digitToInt(char c) { return (c >= '0' && c <= '7') ? (c - '0') : 0; }
 
 static bool canWriteDir(const Inode& ino, int32_t uid, int32_t gid) {
@@ -101,7 +99,6 @@ static bool splitAbsPath(const std::string& path, std::vector<std::string>& part
     return true;
 }
 
-// buscar entry dentro de dir inode (solo directos)
 static bool findEntryInDir(const std::string& disk, const Superblock& sb, int32_t dirIno,
                            const std::string& name, int32_t& outInode, std::string& err) {
     Inode dino{};
@@ -128,7 +125,7 @@ static bool findEntryInDir(const std::string& disk, const Superblock& sb, int32_
     return true;
 }
 
-// primer '0' en bitmap
+
 static bool findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t count, int32_t& outIndex, std::string& err) {
     std::ifstream file(disk, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir disco para leer bitmap."; return false; }
@@ -144,14 +141,13 @@ static bool findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t c
     return true;
 }
 
-// agrega entry al dir, crea nuevo folderblock si hace falta
+
 static bool addEntryToDir(const std::string& disk, Superblock& sb, int32_t partStart,
                           int32_t dirInoIdx, const std::string& name, int32_t childInoIdx,
                           std::string& err) {
     Inode dir{};
     if (!readInode(disk, sb, dirInoIdx, dir, err)) return false;
 
-    // slot libre en bloques existentes
     for (int i = 0; i < 12; i++) {
         int32_t b = dir.i_block[i];
         if (b < 0) continue;
@@ -169,7 +165,6 @@ static bool addEntryToDir(const std::string& disk, Superblock& sb, int32_t partS
         }
     }
 
-    // necesito nuevo folderblock
     int32_t freeBlock = -1;
     if (!findFirstFreeBit(disk, sb.s_bm_block_start, sb.s_blocks_count, freeBlock, err)) return false;
     if (freeBlock < 0) { err = "Error: no hay bloques libres."; return false; }
@@ -264,7 +259,7 @@ static bool ensureParents(const std::string& disk, Superblock& sb, int32_t partS
                           int32_t uid, int32_t gid,
                           int32_t& outParentInode,
                           std::string& err) {
-    int32_t current = 0; // root
+    int32_t current = 0; 
     for (const auto& part : dirParts) {
         int32_t next = -1;
         if (!findEntryInDir(disk, sb, current, part, next, err)) return false;
@@ -360,9 +355,8 @@ bool mkdir(const std::string& path, bool parents, std::string& outMsg) {
         return false;
     }
 
-    // =====================
     // JOURNAL (EXT3)
-    // =====================
+    
     if (sb.s_filesystem_type == 3) {
 
         int32_t journalingStart = partStart + sizeof(Superblock);
@@ -377,12 +371,8 @@ bool mkdir(const std::string& path, bool parents, std::string& outMsg) {
         );
     }
 
-    // =====================
-
     outMsg = "Carpeta creada correctamente: " + path;
     return true;
     }
 
-
-
-} // namespace cmd
+} 

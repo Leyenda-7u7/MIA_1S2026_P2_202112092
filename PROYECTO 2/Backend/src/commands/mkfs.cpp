@@ -111,12 +111,14 @@ static Block64 makeFileBlock64(const std::string& content) {
     return b;
 }
 
-static Journal makeEmptyJournal(int32_t count) {
+static Journal makeEmptyJournal() {
     Journal j{};
-    j.j_count = count;
+    j.j_count = 0;
+
     std::memset(j.j_content.i_operation, 0, sizeof(j.j_content.i_operation));
     std::memset(j.j_content.i_path, 0, sizeof(j.j_content.i_path));
     std::memset(j.j_content.i_content, 0, sizeof(j.j_content.i_content));
+
     j.j_content.i_date = 0.0f;
     return j;
 }
@@ -248,9 +250,9 @@ bool mkfs(const std::string& id, const std::string& type, const std::string& fs,
         return false;
     }
 
-    // 1) Inicializar journals vacíos
+    // 1) Inicializar journals 
     for (int32_t i = 0; i < L3.n_journaling; i++) {
-        Journal j = makeEmptyJournal(i + 1);
+        Journal j = makeEmptyJournal();
         int32_t pos = L3.journaling_start + i * (int32_t)sizeof(Journal);
         if (!writeAt(diskPath, pos, &j, sizeof(Journal), err)) {
             outMsg = "Error escribiendo journaling: " + err;
