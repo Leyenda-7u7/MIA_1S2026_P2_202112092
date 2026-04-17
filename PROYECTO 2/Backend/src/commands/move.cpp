@@ -295,9 +295,7 @@ static bool updateDotDotIfDirectory(const std::string& disk, const Superblock& s
     return false;
 }
 
-// =======================================
-// JOURNAL
-// =======================================
+// JOURNAL (EXT3)
 
 static void writeMoveJournal(const std::string& disk,
                              int32_t partStart,

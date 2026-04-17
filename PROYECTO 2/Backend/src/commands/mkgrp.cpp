@@ -1,8 +1,9 @@
 #include "commands/mkgrp.hpp"
 
-#include "commands/login.hpp"   // hasActiveSession(), getSessionPartition(), sessionUid(), sessionGid()
+#include "commands/login.hpp"  
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -10,7 +11,6 @@
 #include <algorithm>
 #include <cstring>
 
-// ---------------- IO helpers ----------------
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -30,7 +30,6 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// --------------- Path helpers ---------------
 static std::vector<std::string> splitPath(const std::string& p) {
     std::vector<std::string> parts;
     std::string cur;
@@ -49,15 +48,13 @@ static std::string nameFrom12(const char b_name[12]) {
     return std::string(b_name, b_name + len);
 }
 
-static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex,
-                             Inode& out, std::string& err) {
+static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex, Inode& out, std::string& err) {
     int32_t pos = sb.s_inode_start + inoIndex * (int32_t)sizeof(Inode);
     return readAt(disk, pos, &out, sizeof(Inode), err);
 }
 
 static bool findEntryInDir(const std::string& disk, const Superblock& sb, const Inode& dirIno,
                            const std::string& name, int32_t& outInode, std::string& err) {
-    // Solo directos 0..11
     for (int i = 0; i < 12; i++) {
         int32_t blk = dirIno.i_block[i];
         if (blk < 0) continue;
@@ -109,7 +106,6 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// --------------- Read file (direct blocks only) ---------------
 static bool readFileContentDirect(const std::string& disk, const Superblock& sb, const Inode& fileIno,
                                   std::string& out, std::string& err) {
     int32_t remaining = fileIno.i_s;
@@ -128,11 +124,9 @@ static bool readFileContentDirect(const std::string& disk, const Superblock& sb,
         remaining -= take;
     }
 
-    // Si remaining > 0, necesitarías indirectos; por ahora asumimos users.txt pequeño.
     return true;
 }
 
-// --------------- Bitmap: find free block ---------------
 static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t count, std::string& err) {
     std::ifstream file(disk, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + disk; return -1; }
@@ -147,7 +141,6 @@ static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_
     return -1;
 }
 
-// --------------- Write file (direct blocks, allocate if needed) ---------------
 static bool writeFileContentDirect(const std::string& disk, Superblock& sb,
                                    int32_t inodeIndex, Inode& fileIno,
                                    const std::string& newContent,
@@ -218,7 +211,6 @@ static bool writeFileContentDirect(const std::string& disk, Superblock& sb,
     return true;
 }
 
-// -------------------- users.txt parsing --------------------
 static std::string trimSpaces(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && std::isspace((unsigned char)s[a])) a++;
@@ -237,6 +229,24 @@ static std::vector<std::string> splitCSV(const std::string& line) {
     }
     parts.push_back(trimSpaces(cur));
     return parts;
+}
+
+static void tryWriteMkgrpJournal(const std::string& disk,
+                                 int32_t partStart,
+                                 const Superblock& sb,
+                                 const std::string& groupName) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "mkgrp",
+        "/users.txt",
+        groupName
+    );
 }
 
 namespace cmd {
@@ -320,7 +330,7 @@ bool mkgrp(const std::string& name, std::string& outMsg) {
         int idNum = 0;
         try { idNum = std::stoi(cols[0]); } catch (...) { continue; }
 
-        // borrados: id=0 (si lo manejas después)
+        // borrados: id=0 
         if (idNum <= 0) continue;
 
         // Tipo: G o U
@@ -345,15 +355,6 @@ bool mkgrp(const std::string& name, std::string& outMsg) {
     if (!content.empty() && content.back() != '\n') content.push_back('\n');
 
     content += std::to_string(newId) + ",G," + name + "\n";
-
-    // Escribir de vuelta (puede requerir nuevos bloques)
-    // (OJO) writeFileContentDirect intenta escribir SB en una posición aproximada, así que aquí actualizamos SB correcto:
-    // 1) asigna bloques y escribe data
-    // 2) escribe inodo
-    // 3) escribe SB en partStart
-
-    // Asignación + escritura bloques + inodo
-    // -> Usamos una versión segura: escribimos bloques e inodo aquí y el SB al final.
 
     // Calcular bloques necesarios
     int32_t neededBytes  = (int32_t)content.size();
@@ -410,8 +411,13 @@ bool mkgrp(const std::string& name, std::string& outMsg) {
     // Escribir SB actualizado
     if (!writeAt(disk, partStart, &sb, sizeof(Superblock), err)) { outMsg = err; return false; }
 
+
+    // JOURNAL (EXT3)
+
+    tryWriteMkgrpJournal(disk, partStart, sb, name);
+
     outMsg = "Grupo creado correctamente: " + name;
     return true;
 }
 
-} // namespace cmd
+} 

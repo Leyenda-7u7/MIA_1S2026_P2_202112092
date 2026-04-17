@@ -288,6 +288,8 @@ bool chmod(const std::string& path, bool recursive, const std::string& ugo, std:
         return false;
     }
 
+    // JOURNAL (EXT3)
+
     writeChmodJournal(disk, partStart, sb, path, ugo);
 
     outMsg = "Chmod realizado correctamente.";

@@ -177,9 +177,8 @@ bool rename(const std::string& path, const std::string& newName, std::string& ou
                     return false;
                 }
 
-                // =====================
                 // JOURNAL (EXT3)
-                // =====================
+
                 tryWriteRenameJournal(disk, partStart, sb, path, newName);
 
                 outMsg = "Rename exitoso: " + path + " -> " + newName;

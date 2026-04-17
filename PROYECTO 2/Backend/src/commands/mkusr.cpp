@@ -1,8 +1,9 @@
 #include "commands/mkusr.hpp"
 
-#include "commands/login.hpp"   // hasActiveSession(), getSessionPartition(), sessionUid()
+#include "commands/login.hpp"  
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -11,7 +12,6 @@
 #include <cstring>
 #include <cctype>
 
-// ---------------- IO helpers ----------------
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -31,7 +31,6 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// ---------------- Path helpers ----------------
 static std::vector<std::string> splitPath(const std::string& p) {
     std::vector<std::string> parts;
     std::string cur;
@@ -50,8 +49,7 @@ static std::string nameFrom12(const char b_name[12]) {
     return std::string(b_name, b_name + len);
 }
 
-static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex,
-                             Inode& out, std::string& err) {
+static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex, Inode& out, std::string& err) {
     int32_t pos = sb.s_inode_start + inoIndex * (int32_t)sizeof(Inode);
     return readAt(disk, pos, &out, sizeof(Inode), err);
 }
@@ -86,7 +84,7 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     }
 
     auto parts = splitPath(absPath);
-    int32_t current = 0; // root
+    int32_t current = 0; 
 
     for (size_t k = 0; k < parts.size(); k++) {
         Inode cur{};
@@ -108,7 +106,6 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// ---------------- File read/write direct ----------------
 static bool readFileContentDirect(const std::string& disk, const Superblock& sb, const Inode& fileIno,
                                   std::string& out, std::string& err) {
     int32_t remaining = fileIno.i_s;
@@ -143,7 +140,6 @@ static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_
     return -1;
 }
 
-// crecimiento (solo directos 12)
 static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
                                        int32_t inodeIndex, Inode& fileIno,
                                        const std::string& newContent,
@@ -199,7 +195,6 @@ static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
     return true;
 }
 
-// ---------------- users.txt parsing ----------------
 static std::string trimSpaces(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && std::isspace((unsigned char)s[a])) a++;
@@ -218,6 +213,24 @@ static std::vector<std::string> splitCSV(const std::string& line) {
     }
     parts.push_back(trimSpaces(cur));
     return parts;
+}
+
+static void tryWriteMkusrJournal(const std::string& disk,
+                                 int32_t partStart,
+                                 const Superblock& sb,
+                                 const std::string& userName) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "mkusr",
+        "/users.txt",
+        userName
+    );
 }
 
 namespace cmd {
@@ -271,11 +284,6 @@ bool mkusr(const std::string& user,
     std::string content;
     if (!readFileContentDirect(disk, sb, usersIno, content, err)) { outMsg = err; return false; }
 
-    // validar:
-    // 1) grp debe existir y estar activo (id>0) en líneas tipo G
-    // 2) user no debe existir activo (id>0) en líneas tipo U
-    // 3) calcular next user id (max id de U o G + 1 es válido, pero aquí usamos max id global +1)
-
     std::istringstream iss(content);
     std::string line;
     bool grpExists = false;
@@ -319,7 +327,7 @@ bool mkusr(const std::string& user,
 
     int newId = maxId + 1;
 
-    // agregar línea al final (formato sin espacios, como tus ejemplos)
+    // agregar línea al final 
     std::string newLine = std::to_string(newId) + ",U," + grp + "," + user + "," + pass + "\n";
     std::string newContent = content;
     if (!newContent.empty() && newContent.back() != '\n') newContent.push_back('\n');
@@ -334,8 +342,12 @@ bool mkusr(const std::string& user,
     // escribir SB si cambió free blocks
     if (!writeAt(disk, partStart, &sb, sizeof(Superblock), err)) { outMsg = err; return false; }
 
+
+    // JOURNAL (EXT3)
+    tryWriteMkusrJournal(disk, partStart, sb, user);
+
     outMsg = "Usuario creado correctamente: " + user;
     return true;
 }
 
-} // namespace cmd
+} 

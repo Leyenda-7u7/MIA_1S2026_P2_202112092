@@ -1,8 +1,9 @@
 #include "commands/rmgrp.hpp"
 
-#include "commands/login.hpp"   // hasActiveSession(), getSessionPartition(), sessionUid()
+#include "commands/login.hpp"   
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -11,7 +12,6 @@
 #include <cstring>
 #include <cctype>
 
-// ---------------- IO helpers ----------------
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -31,7 +31,6 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// ---------------- Path helpers ----------------
 static std::vector<std::string> splitPath(const std::string& p) {
     std::vector<std::string> parts;
     std::string cur;
@@ -50,8 +49,7 @@ static std::string nameFrom12(const char b_name[12]) {
     return std::string(b_name, b_name + len);
 }
 
-static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex,
-                             Inode& out, std::string& err) {
+static bool readInodeByIndex(const std::string& disk, const Superblock& sb, int32_t inoIndex, Inode& out, std::string& err) {
     int32_t pos = sb.s_inode_start + inoIndex * (int32_t)sizeof(Inode);
     return readAt(disk, pos, &out, sizeof(Inode), err);
 }
@@ -86,7 +84,7 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     }
 
     auto parts = splitPath(absPath);
-    int32_t current = 0; // root
+    int32_t current = 0;
 
     for (size_t k = 0; k < parts.size(); k++) {
         Inode cur{};
@@ -108,7 +106,6 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// ---------------- Read file direct ----------------
 static bool readFileContentDirect(const std::string& disk, const Superblock& sb, const Inode& fileIno,
                                   std::string& out, std::string& err) {
     int32_t remaining = fileIno.i_s;
@@ -129,7 +126,6 @@ static bool readFileContentDirect(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// ---------------- Bitmap scan for free block ----------------
 static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t count, std::string& err) {
     std::ifstream file(disk, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + disk; return -1; }
@@ -144,7 +140,6 @@ static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_
     return -1;
 }
 
-// ---------------- Write file direct (grow only) ----------------
 static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
                                        int32_t inodeIndex, Inode& fileIno,
                                        const std::string& newContent,
@@ -203,7 +198,6 @@ static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
     return true;
 }
 
-// ---------------- users.txt parsing helpers ----------------
 static std::string trimSpaces(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && std::isspace((unsigned char)s[a])) a++;
@@ -222,6 +216,24 @@ static std::vector<std::string> splitCSV(const std::string& line) {
     }
     parts.push_back(trimSpaces(cur));
     return parts;
+}
+
+static void tryWriteRmgrpJournal(const std::string& disk,
+                                 int32_t partStart,
+                                 const Superblock& sb,
+                                 const std::string& groupName) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "rmgrp",
+        "/users.txt",
+        groupName
+    );
 }
 
 namespace cmd {
@@ -325,8 +337,13 @@ bool rmgrp(const std::string& name, std::string& outMsg) {
     // escribir SB actualizado
     if (!writeAt(disk, partStart, &sb, sizeof(Superblock), err)) { outMsg = err; return false; }
 
+
+    // JOURNAL (EXT3)
+
+    tryWriteRmgrpJournal(disk, partStart, sb, name);
+
     outMsg = "Grupo eliminado correctamente: " + name;
     return true;
 }
 
-} // namespace cmd
+} 

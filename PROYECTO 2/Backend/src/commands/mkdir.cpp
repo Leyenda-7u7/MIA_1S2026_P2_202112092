@@ -1,5 +1,4 @@
 #include "commands/mkdir.hpp"
-
 #include "commands/login.hpp"
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
@@ -44,7 +43,6 @@ static bool canWriteDir(const Inode& ino, int32_t uid, int32_t gid) {
     return (o & 2) != 0;
 }
 
-// ----------------- EXT2 helpers -----------------
 static bool readSuperblock(const std::string& disk, int32_t partStart, Superblock& sb, std::string& err) {
     if (!readAt(disk, partStart, &sb, sizeof(Superblock), err)) return false;
     if (sb.s_magic != 0xEF53) { err = "Error: la partición no parece EXT2 (magic inválido)."; return false; }

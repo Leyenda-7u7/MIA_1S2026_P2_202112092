@@ -1,8 +1,9 @@
 #include "commands/chgrp.hpp"
 
-#include "commands/login.hpp"   // hasActiveSession(), getSessionPartition(), sessionUid()
+#include "commands/login.hpp"   
 #include "Structures.hpp"
 #include "ext2/Bitmap.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -11,7 +12,6 @@
 #include <cstring>
 #include <cctype>
 
-// ---------------- IO helpers ----------------
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) { err = "Error: no se pudo abrir el disco: " + path; return false; }
@@ -31,7 +31,6 @@ static bool writeAt(const std::string& path, int32_t offset, const void* data, s
     return true;
 }
 
-// ---------------- Path helpers ----------------
 static std::vector<std::string> splitPath(const std::string& p) {
     std::vector<std::string> parts;
     std::string cur;
@@ -108,7 +107,6 @@ static bool resolvePathToInode(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// ---------------- File read/write direct ----------------
 static bool readFileContentDirect(const std::string& disk, const Superblock& sb, const Inode& fileIno,
                                   std::string& out, std::string& err) {
     int32_t remaining = fileIno.i_s;
@@ -143,7 +141,6 @@ static int32_t findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_
     return -1;
 }
 
-// crecimiento (solo directos 12)
 static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
                                        int32_t inodeIndex, Inode& fileIno,
                                        const std::string& newContent,
@@ -200,7 +197,6 @@ static bool writeFileContentDirectGrow(const std::string& disk, Superblock& sb,
     return true;
 }
 
-// ---------------- users.txt parsing ----------------
 static std::string trimSpaces(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && std::isspace((unsigned char)s[a])) a++;
@@ -219,6 +215,27 @@ static std::vector<std::string> splitCSV(const std::string& line) {
     }
     parts.push_back(trimSpaces(cur));
     return parts;
+}
+
+static void tryWriteChgrpJournal(const std::string& disk,
+                                 int32_t partStart,
+                                 const Superblock& sb,
+                                 const std::string& userName,
+                                 const std::string& newGroup) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    std::string content = userName + ":" + newGroup;
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "chgrp",
+        "/users.txt",
+        content
+    );
 }
 
 namespace cmd {
@@ -336,8 +353,11 @@ bool chgrp(const std::string& user, const std::string& grp, std::string& outMsg)
 
     if (!writeAt(disk, partStart, &sb, sizeof(Superblock), err)) { outMsg = err; return false; }
 
+    // JOURNAL (EXT3)
+    tryWriteChgrpJournal(disk, partStart, sb, user, grp);
+
     outMsg = "Grupo actualizado correctamente: " + user + " -> " + grp;
     return true;
 }
 
-} // namespace cmd
+} 

@@ -489,9 +489,8 @@ bool mkfile(const std::string& path,
         return false;
     }
 
-    // =====================
     // JOURNAL (EXT3)
-    // =====================
+    
     tryWriteMkfileJournal(disk, partStart, sb, path, content);
 
     outMsg = "Archivo creado correctamente: " + path;

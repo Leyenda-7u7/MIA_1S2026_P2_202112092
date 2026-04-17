@@ -1,15 +1,14 @@
 #include "commands/login.hpp"
 #include "commands/mount.hpp"
 #include "Structures.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <cstring>
 #include <vector>
 #include <sstream>
+#include <algorithm>
 
-// ===============================
-// VARIABLES GLOBALES DE SESIÓN
-// ===============================
 static bool g_logged = false;
 static std::string g_user;
 static int32_t g_uid = -1;
@@ -18,11 +17,7 @@ static int32_t g_gid = -1;
 static std::string g_diskPath;
 static int32_t g_partStart = 0;
 static int32_t g_partSize = 0;
-
-
-// ===============================
-// HELPERS
-// ===============================
+static std::string g_partId;
 
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
@@ -54,10 +49,44 @@ static std::vector<std::string> split(const std::string& line, char delim) {
     return parts;
 }
 
+static void tryWriteLoginJournal(const std::string& disk,
+                                 int32_t partStart,
+                                 const Superblock& sb,
+                                 const std::string& id,
+                                 const std::string& user) {
+    if (sb.s_filesystem_type != 3) return;
 
-// ===============================
-// LOGIN
-// ===============================
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "login",
+        id,
+        user
+    );
+}
+
+static void tryWriteLogoutJournal(const std::string& disk,
+                                  int32_t partStart,
+                                  const Superblock& sb,
+                                  const std::string& id,
+                                  const std::string& user) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "logout",
+        id,
+        user
+    );
+}
+
 namespace cmd {
 
 bool login(const std::string& user,
@@ -75,7 +104,6 @@ bool login(const std::string& user,
         return false;
     }
 
-    // 1) Obtener partición montada por ID
     std::string disk;
     int32_t start = 0;
     int32_t size = 0;
@@ -86,7 +114,6 @@ bool login(const std::string& user,
         return false;
     }
 
-    // 2) Leer Superblock
     Superblock sb{};
     if (!readAt(disk, start, &sb, sizeof(Superblock), err)) {
         outMsg = err;
@@ -94,13 +121,12 @@ bool login(const std::string& user,
     }
 
     if (sb.s_magic != 0xEF53) {
-        outMsg = "Error: la partición no está formateada en EXT2.";
+        outMsg = "Error: la partición no está formateada en EXT2/EXT3.";
         return false;
     }
 
-    // 3) Leer inodo 1 (users.txt)
     Inode usersIno{};
-    int32_t inode1Pos = sb.s_inode_start + sizeof(Inode); // índice 1
+    int32_t inode1Pos = sb.s_inode_start + (int32_t)sizeof(Inode);
 
     if (!readAt(disk, inode1Pos, &usersIno, sizeof(Inode), err)) {
         outMsg = err;
@@ -112,7 +138,6 @@ bool login(const std::string& user,
         return false;
     }
 
-    // 4) Leer contenido de users.txt
     std::string content;
     int32_t remaining = usersIno.i_s;
 
@@ -133,7 +158,6 @@ bool login(const std::string& user,
         remaining -= take;
     }
 
-    // 5) Buscar usuario en el archivo
     std::stringstream ss(content);
     std::string line;
 
@@ -148,15 +172,18 @@ bool login(const std::string& user,
             std::string filePass = parts[4];
 
             if (fileUser == user && filePass == pass) {
-                // LOGIN EXITOSO
                 g_logged = true;
                 g_user = user;
-                g_uid = std::stoi(parts[0]);  // UID
-                g_gid = 1; // simplificado
+                g_uid = std::stoi(parts[0]);
+                g_gid = 1;
 
                 g_diskPath = disk;
                 g_partStart = start;
                 g_partSize = size;
+                g_partId = id;
+
+                // Journal login 
+                tryWriteLoginJournal(disk, start, sb, id, user);
 
                 outMsg = "Login exitoso. Bienvenido " + user + ".";
                 return true;
@@ -168,14 +195,24 @@ bool login(const std::string& user,
     return false;
 }
 
-
-// ===============================
-// LOGOUT
-// ===============================
 bool logout(std::string& outMsg) {
     if (!g_logged) {
-        outMsg = "Error: no existe una sesión activa.";
+        outMsg = "Error: no existe una sesion activa.";
         return false;
+    }
+
+    // Guardar datos antes de limpiar la sesión
+    std::string disk = g_diskPath;
+    int32_t partStart = g_partStart;
+    std::string partId = g_partId;
+    std::string user = g_user;
+
+    std::string err;
+    Superblock sb{};
+    if (readAt(disk, partStart, &sb, sizeof(Superblock), err)) {
+        if (sb.s_magic == 0xEF53) {
+            tryWriteLogoutJournal(disk, partStart, sb, partId, user);
+        }
     }
 
     g_logged = false;
@@ -185,15 +222,12 @@ bool logout(std::string& outMsg) {
     g_diskPath.clear();
     g_partStart = 0;
     g_partSize = 0;
+    g_partId.clear();
 
-    outMsg = "Sesión cerrada correctamente.";
+    outMsg = "Sesion cerrada correctamente.";
     return true;
 }
 
-
-// ===============================
-// ESTADO SESIÓN
-// ===============================
 bool hasActiveSession() {
     return g_logged;
 }
@@ -217,4 +251,4 @@ bool getSessionPartition(std::string& diskPath,
 int32_t sessionUid() { return g_uid; }
 int32_t sessionGid() { return g_gid; }
 
-} // namespace cmd
+} 

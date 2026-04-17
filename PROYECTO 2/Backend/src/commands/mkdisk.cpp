@@ -15,8 +15,7 @@ static int32_t randomSignature() {
 }
 
 static char fitToDiskFitChar(const std::string& fitStr) {
-    // enunciado: BF, FF, WF  -> disco: B, F, W
-    if (fitStr.empty()) return 'F'; // default First Fit
+    if (fitStr.empty()) return 'F'; 
 
     std::string f = fitStr;
     for (auto &c : f) c = (char)std::tolower((unsigned char)c);
@@ -30,7 +29,6 @@ static char fitToDiskFitChar(const std::string& fitStr) {
 static long long sizeToBytes(int32_t size, const std::string& unitStr) {
     if (size <= 0) return -1;
 
-    // unit default: M
     std::string u = unitStr;
     if (u.empty()) u = "m";
 
@@ -86,11 +84,9 @@ bool mkdisk(int32_t size,
         return false;
     }
 
-    // Ruta absoluta real (para debug y cero confusión)
     std::filesystem::path p(path);
     std::filesystem::path abs = std::filesystem::absolute(p);
 
-    // Crear directorios padre si existen
     try {
         if (abs.has_parent_path()) {
             std::filesystem::create_directories(abs.parent_path());
@@ -100,7 +96,6 @@ bool mkdisk(int32_t size,
         return false;
     }
 
-    // Crear archivo y llenarlo de ceros
     std::ofstream file(abs, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
         outMsg = "Error: no se pudo crear/abrir el disco: " + abs.string();
@@ -123,7 +118,6 @@ bool mkdisk(int32_t size,
     }
     file.flush();
 
-    // Escribir MBR al inicio
     if (bytes > INT32_MAX) {
         file.close();
         outMsg = "Error: el tamaño excede el límite soportado por int32_t.";
@@ -144,7 +138,6 @@ bool mkdisk(int32_t size,
     file.flush();
     file.close();
 
-    // Validación final (CLAVE)
     try {
         if (!std::filesystem::exists(abs)) {
             outMsg = "Error: mkdisk terminó pero el archivo NO existe: " + abs.string();
@@ -165,4 +158,4 @@ bool mkdisk(int32_t size,
     return true;
 }
 
-} // namespace cmd
+} 

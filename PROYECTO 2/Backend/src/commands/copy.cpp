@@ -11,10 +11,6 @@
 #include <fstream>
 #include <algorithm>
 
-// =======================================
-// IO HELPERS
-// =======================================
-
 static bool readAt(const std::string& path, int32_t offset, void* data, size_t sz, std::string& err) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
@@ -115,10 +111,6 @@ static bool findFirstFreeBit(const std::string& disk, int32_t bmStart, int32_t c
     return true;
 }
 
-// =======================================
-// PATH / NAMES
-// =======================================
-
 static std::string name12ToString(const char n[12]) {
     size_t len = 0;
     while (len < 12 && n[len] != '\0') len++;
@@ -153,10 +145,6 @@ static bool splitAbsPath(const std::string& path, std::vector<std::string>& part
     return true;
 }
 
-// =======================================
-// PERMISOS
-// =======================================
-
 static int digitToInt(char c) {
     return (c >= '0' && c <= '7') ? (c - '0') : 0;
 }
@@ -184,10 +172,6 @@ static bool canWrite(const Inode& ino, int uid, int gid) {
     if (gid == ino.i_gid) return (g & 2) != 0;
     return (o & 2) != 0;
 }
-
-// =======================================
-// DIRECTORY HELPERS
-// =======================================
 
 static bool findEntryInDir(const std::string& disk, const Superblock& sb, int32_t dirIno,
                            const std::string& name, int32_t& outInode, std::string& err) {
@@ -308,10 +292,6 @@ static bool collectDirChildren(const std::string& disk, const Superblock& sb,
     return true;
 }
 
-// =======================================
-// JOURNAL
-// =======================================
-
 static void writeCopyJournal(const std::string& disk,
                              int32_t partStart,
                              const Superblock& sb,
@@ -330,10 +310,6 @@ static void writeCopyJournal(const std::string& disk,
         destino
     );
 }
-
-// =======================================
-// CREATE NEW DIR IN DEST
-// =======================================
 
 static bool createDirClone(const std::string& disk, Superblock& sb, int32_t partStart,
                            const Inode& srcDir, int32_t parentDestIno,
@@ -383,10 +359,6 @@ static bool createDirClone(const std::string& disk, Superblock& sb, int32_t part
     newDirIno = freeIno;
     return true;
 }
-
-// =======================================
-// COPY FILE
-// =======================================
 
 static bool copyFileToDir(const std::string& disk, Superblock& sb,
                           int32_t partStart,
@@ -444,10 +416,6 @@ static bool copyFileToDir(const std::string& disk, Superblock& sb,
     return true;
 }
 
-// =======================================
-// RECURSIVE COPY
-// =======================================
-
 static bool copyTree(const std::string& disk, Superblock& sb, int32_t partStart,
                      int32_t srcInoIdx, int32_t destDirIno,
                      const std::string& entryName,
@@ -457,7 +425,6 @@ static bool copyTree(const std::string& disk, Superblock& sb, int32_t partStart,
     if (!readInode(disk, sb, srcInoIdx, src, err)) return false;
 
     if (!canRead(src, uid, gid)) {
-        // Se ignora si no tiene permiso de lectura
         return true;
     }
 
@@ -465,7 +432,6 @@ static bool copyTree(const std::string& disk, Superblock& sb, int32_t partStart,
         return copyFileToDir(disk, sb, partStart, srcInoIdx, destDirIno, entryName, err);
     }
 
-    // Es carpeta: crear clon y copiar hijos
     int32_t newDirIno = -1;
     if (!createDirClone(disk, sb, partStart, src, destDirIno, entryName, newDirIno, err)) return false;
 
@@ -478,10 +444,6 @@ static bool copyTree(const std::string& disk, Superblock& sb, int32_t partStart,
 
     return true;
 }
-
-// =======================================
-// MAIN
-// =======================================
 
 namespace cmd {
 
@@ -569,10 +531,12 @@ bool copy(const std::string& path, const std::string& destino, std::string& outM
         return false;
     }
 
+    // JOURNAL (EXT3)
+
     writeCopyJournal(disk, partStart, sb, path, destino);
 
     outMsg = "Copy realizado correctamente.";
     return true;
 }
 
-} // namespace cmd
+} 

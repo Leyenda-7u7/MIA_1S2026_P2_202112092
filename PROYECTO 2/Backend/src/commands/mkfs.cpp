@@ -4,6 +4,7 @@
 #include "ext2/Ext2Layout.hpp"
 #include "ext2/Bitmap.hpp"
 #include "ext3/Ext3Layout.hpp"
+#include "ext3/journal.hpp"
 
 #include <fstream>
 #include <cstring>
@@ -121,6 +122,25 @@ static Journal makeEmptyJournal() {
 
     j.j_content.i_date = 0.0f;
     return j;
+}
+
+static void tryWriteMkfsJournal(const std::string& disk,
+                                int32_t partStart,
+                                const Superblock& sb,
+                                const std::string& id,
+                                const std::string& fs) {
+    if (sb.s_filesystem_type != 3) return;
+
+    int32_t journalingStart = partStart + (int32_t)sizeof(Superblock);
+
+    ext3::writeJournal(
+        disk,
+        journalingStart,
+        0,
+        "mkfs",
+        id,
+        fs
+    );
 }
 
 namespace cmd {
@@ -326,8 +346,11 @@ bool mkfs(const std::string& id, const std::string& type, const std::string& fs,
     int32_t block1Pos = L3.blocks_start + 1 * 64;
     if (!writeAt(diskPath, block1Pos, &b1, sizeof(Block64), err)) { outMsg = err; return false; }
 
+    // 7) Escribir journal de mkfs
+    tryWriteMkfsJournal(diskPath, partStart, sb, id, fs);
+
     outMsg = "MKFS exitoso (EXT3). Partición " + id + " formateada. Se creó /users.txt y journaling.";
     return true;
 }
 
-} // namespace cmd
+}
