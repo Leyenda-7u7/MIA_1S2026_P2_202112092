@@ -121,11 +121,25 @@ ParsedCommand parseCommand(
 std::string executeLine(const std::string& line) {
     if (line.empty()) return "";
 
+        // NUEVO: Detectar comentarios y mostrarlos
+    std::string trimmed = line;
+    // Quitar espacios al inicio
+    size_t firstChar = trimmed.find_first_not_of(" \t\r\n");
+    if (firstChar != std::string::npos) {
+        trimmed = trimmed.substr(firstChar);
+    }
+    
+    if (!trimmed.empty() && trimmed[0] == '#') {
+        // Es un comentario, devolverlo tal cual
+        return trimmed;
+    }
+
     std::vector<std::string> tokens = tokenizeRespectQuotes(line);
     if (tokens.empty()) return "";
 
     std::string cmdName = toLower(tokens[0]);
     std::string outMsg;
+    
 
     // =========================================================
     // MKDISK
